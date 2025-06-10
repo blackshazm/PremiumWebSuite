@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # Banco de dados PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: bioclub-postgres
+    environment:
+      POSTGRES_DB: bioclub_plus
+      POSTGRES_USER: bioclub_user
+      POSTGRES_PASSWORD: bioclub_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - bioclub-network
+
+  # Redis para cache e sessões
+  redis:
+    image: redis:7-alpine
+    container_name: bioclub-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bioclub-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bioclub-backend
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://bioclub_user:bioclub_password@postgres:5432/bioclub_plus
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - bioclub-network
+    command: npm run dev
+
+  # Frontend React
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bioclub-frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:3001
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - bioclub-network
+    command: npm start
+
+  # Adminer para gerenciar o banco
+  adminer:
+    image: adminer:latest
+    container_name: bioclub-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - bioclub-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bioclub-network:
+    driver: bridge

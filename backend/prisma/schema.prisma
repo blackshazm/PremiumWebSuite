@@ -1,0 +1,634 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Modelo de usuário principal
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  cpf               String   @unique
+  firstName         String
+  lastName          String
+  phone             String?
+  birthDate         DateTime?
+  password          String?
+  emailVerified     Boolean  @default(false)
+  emailVerifiedAt   DateTime?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // OAuth
+  googleId          String?  @unique
+  facebookId        String?  @unique
+  
+  // Endereço
+  address           Address?
+  
+  // Assinatura
+  subscription      Subscription?
+  
+  // Sistema de indicações
+  referralCode      String   @unique
+  referredBy        User?    @relation("UserReferrals", fields: [referredById], references: [id])
+  referredById      String?
+  referrals         User[]   @relation("UserReferrals")
+  
+  // Comissões
+  commissionsEarned Commission[] @relation("CommissionEarner")
+  commissionsFrom   Commission[] @relation("CommissionSource")
+  
+  // Dados bancários para saque
+  bankData          BankData?
+  
+  // Pedidos na loja
+  orders            Order[]
+  
+  // Cupons
+  userCoupons       UserCoupon[]
+  
+  // Notificações
+  notifications     Notification[]
+  
+  // Preferências
+  preferences       UserPreferences?
+  
+  // Logs de atividade
+  activityLogs      ActivityLog[]
+  
+  // Avaliações de produtos
+  productReviews    ProductReview[]
+  
+  // Carrinho
+  cartItems         CartItem[]
+
+  @@map("users")
+}
+
+// Endereço do usuário
+model Address {
+  id          String @id @default(cuid())
+  userId      String @unique
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  street      String
+  number      String
+  complement  String?
+  neighborhood String
+  city        String
+  state       String
+  zipCode     String
+  country     String @default("Brasil")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("addresses")
+}
+
+// Dados bancários para saque
+model BankData {
+  id          String @id @default(cuid())
+  userId      String @unique
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  bankCode    String
+  bankName    String
+  agency      String
+  account     String
+  accountType String // "corrente" ou "poupanca"
+  holderName  String
+  holderCpf   String
+  pixKey      String?
+  pixKeyType  String? // "cpf", "email", "phone", "random"
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("bank_data")
+}
+
+// Assinatura do usuário
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  planId            String
+  plan              SubscriptionPlan @relation(fields: [planId], references: [id])
+  
+  status            SubscriptionStatus @default(PENDING)
+  startDate         DateTime?
+  endDate           DateTime?
+  nextBillingDate   DateTime?
+  
+  // Pagamento
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?
+  paymentMethod         PaymentMethod @default(CREDIT_CARD)
+  
+  // Histórico
+  billingHistory    BillingHistory[]
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+// Planos de assinatura
+model SubscriptionPlan {
+  id            String @id @default(cuid())
+  name          String
+  description   String?
+  price         Decimal @db.Decimal(10, 2)
+  billingCycle  BillingCycle @default(MONTHLY)
+  isActive      Boolean @default(true)
+  
+  // Benefícios
+  benefits      String[] // Array de benefícios
+  
+  subscriptions Subscription[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("subscription_plans")
+}
+
+// Histórico de cobrança
+model BillingHistory {
+  id             String @id @default(cuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  amount         Decimal @db.Decimal(10, 2)
+  status         PaymentStatus @default(PENDING)
+  paymentMethod  PaymentMethod
+  
+  // Stripe
+  stripeInvoiceId     String?
+  stripePaymentIntentId String?
+  
+  billingDate    DateTime
+  paidAt         DateTime?
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("billing_history")
+}
+
+// Sistema de comissões
+model Commission {
+  id          String @id @default(cuid())
+  
+  // Quem ganhou a comissão
+  earnerId    String
+  earner      User   @relation("CommissionEarner", fields: [earnerId], references: [id])
+  
+  // De quem veio a comissão (o indicado)
+  sourceId    String
+  source      User   @relation("CommissionSource", fields: [sourceId], references: [id])
+  
+  amount      Decimal @db.Decimal(10, 2)
+  percentage  Decimal @db.Decimal(5, 4) // Ex: 0.3000 para 30%
+  
+  status      CommissionStatus @default(PENDING)
+  type        CommissionType @default(SUBSCRIPTION)
+  
+  // Referência ao pagamento que gerou a comissão
+  billingHistoryId String?
+  orderId          String?
+  
+  // Datas importantes
+  generatedAt DateTime @default(now())
+  availableAt DateTime? // Quando fica disponível para saque
+  paidAt      DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("commissions")
+}
+
+// Solicitações de saque
+model WithdrawalRequest {
+  id          String @id @default(cuid())
+  userId      String
+  
+  amount      Decimal @db.Decimal(10, 2)
+  status      WithdrawalStatus @default(PENDING)
+  
+  // Dados do saque
+  bankData    Json // Snapshot dos dados bancários no momento do saque
+  
+  requestedAt DateTime @default(now())
+  processedAt DateTime?
+  paidAt      DateTime?
+  
+  // Observações administrativas
+  adminNotes  String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("withdrawal_requests")
+}
+
+// Produtos da loja
+model Product {
+  id              String @id @default(cuid())
+  name            String
+  slug            String @unique
+  description     String
+  shortDescription String?
+  
+  // Preço
+  price           Decimal @db.Decimal(10, 2)
+  compareAtPrice  Decimal? @db.Decimal(10, 2) // Preço "de"
+  
+  // Estoque
+  stock           Int @default(0)
+  trackStock      Boolean @default(true)
+  
+  // Categorização
+  category        ProductCategory @relation(fields: [categoryId], references: [id])
+  categoryId      String
+  
+  // Imagens
+  images          ProductImage[]
+  
+  // Especificações
+  ingredients     String[] // Lista de ingredientes
+  benefits        String[] // Lista de benefícios
+  usage           String? // Modo de uso
+  warnings        String? // Contraindicações
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  
+  // Status
+  isActive        Boolean @default(true)
+  isFeatured      Boolean @default(false)
+  
+  // Relacionamentos
+  orderItems      OrderItem[]
+  cartItems       CartItem[]
+  reviews         ProductReview[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("products")
+}
+
+// Categorias de produtos
+model ProductCategory {
+  id          String @id @default(cuid())
+  name        String
+  slug        String @unique
+  description String?
+  image       String?
+  
+  // Hierarquia
+  parentId    String?
+  parent      ProductCategory? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    ProductCategory[] @relation("CategoryHierarchy")
+  
+  products    Product[]
+  
+  isActive    Boolean @default(true)
+  sortOrder   Int @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("product_categories")
+}
+
+// Imagens dos produtos
+model ProductImage {
+  id        String @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  url       String
+  altText   String?
+  sortOrder Int @default(0)
+  
+  createdAt DateTime @default(now())
+
+  @@map("product_images")
+}
+
+// Avaliações de produtos
+model ProductReview {
+  id        String @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  rating    Int // 1 a 5
+  title     String?
+  comment   String?
+  
+  isApproved Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, userId])
+  @@map("product_reviews")
+}
+
+// Carrinho de compras
+model CartItem {
+  id        String @id @default(cuid())
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  quantity  Int @default(1)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, productId])
+  @@map("cart_items")
+}
+
+// Pedidos
+model Order {
+  id            String @id @default(cuid())
+  userId        String
+  user          User @relation(fields: [userId], references: [id])
+  
+  orderNumber   String @unique
+  
+  // Valores
+  subtotal      Decimal @db.Decimal(10, 2)
+  shippingCost  Decimal @db.Decimal(10, 2) @default(0)
+  discount      Decimal @db.Decimal(10, 2) @default(0)
+  total         Decimal @db.Decimal(10, 2)
+  
+  // Status
+  status        OrderStatus @default(PENDING)
+  paymentStatus PaymentStatus @default(PENDING)
+  
+  // Endereço de entrega
+  shippingAddress Json
+  
+  // Pagamento
+  paymentMethod PaymentMethod
+  stripePaymentIntentId String?
+  
+  // Cupom usado
+  couponCode    String?
+  
+  // Itens do pedido
+  items         OrderItem[]
+  
+  // Rastreamento
+  trackingCode  String?
+  shippedAt     DateTime?
+  deliveredAt   DateTime?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("orders")
+}
+
+// Itens do pedido
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  
+  quantity  Int
+  price     Decimal @db.Decimal(10, 2) // Preço no momento da compra
+  
+  createdAt DateTime @default(now())
+
+  @@map("order_items")
+}
+
+// Cupons de desconto
+model Coupon {
+  id              String @id @default(cuid())
+  code            String @unique
+  name            String
+  description     String?
+  
+  // Tipo de desconto
+  type            CouponType @default(PERCENTAGE)
+  value           Decimal @db.Decimal(10, 2) // Valor ou percentual
+  
+  // Condições
+  minimumAmount   Decimal? @db.Decimal(10, 2)
+  maximumDiscount Decimal? @db.Decimal(10, 2)
+  
+  // Validade
+  startDate       DateTime
+  endDate         DateTime
+  
+  // Limites de uso
+  usageLimit      Int?
+  usageCount      Int @default(0)
+  usageLimitPerUser Int? @default(1)
+  
+  // Aplicabilidade
+  applicableToAll Boolean @default(true)
+  productIds      String[] // IDs dos produtos aplicáveis
+  categoryIds     String[] // IDs das categorias aplicáveis
+  
+  // Status
+  isActive        Boolean @default(true)
+  
+  // Relacionamentos
+  userCoupons     UserCoupon[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("coupons")
+}
+
+// Cupons dos usuários
+model UserCoupon {
+  id        String @id @default(cuid())
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  couponId  String
+  coupon    Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  
+  usageCount Int @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, couponId])
+  @@map("user_coupons")
+}
+
+// Notificações
+model Notification {
+  id        String @id @default(cuid())
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title     String
+  message   String
+  type      NotificationType @default(INFO)
+  
+  isRead    Boolean @default(false)
+  readAt    DateTime?
+  
+  // Dados adicionais (JSON)
+  data      Json?
+  
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+// Preferências do usuário
+model UserPreferences {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Notificações
+  emailNotifications    Boolean @default(true)
+  pushNotifications     Boolean @default(true)
+  marketingEmails       Boolean @default(true)
+  
+  // Preferências de produtos
+  preferredCategories   String[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+// Logs de atividade
+model ActivityLog {
+  id        String @id @default(cuid())
+  userId    String?
+  user      User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  action    String
+  entity    String? // Ex: "user", "product", "order"
+  entityId  String?
+  
+  // Dados da ação
+  data      Json?
+  
+  // Informações da requisição
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+
+  @@map("activity_logs")
+}
+
+// Enums
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  PIX
+  BOLETO
+  COMMISSION_BALANCE
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REFUNDED
+  CANCELED
+}
+
+enum CommissionStatus {
+  PENDING
+  AVAILABLE
+  REQUESTED
+  PAID
+  CANCELED
+}
+
+enum CommissionType {
+  SUBSCRIPTION
+  PURCHASE
+  BONUS
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  PAID
+  REJECTED
+  CANCELED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELED
+  REFUNDED
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+  REFERRAL
+  COMMISSION
+  ORDER
+  SUBSCRIPTION
+}
